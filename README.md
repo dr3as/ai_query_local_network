@@ -116,3 +116,57 @@ python3 query.py --model=2 Summarize the errors in this log < /var/log/syslog
 If there is no question on the command line, the piped text is used as the question. For big files, raise `num_ctx` in `settings.py`.
 
 If the server can't be reached, the script stops after 5 seconds with a message instead of waiting.
+
+## Conversations with memory (`query_history.py`)
+
+`query_history.py` lets you have a conversation with a model without sending the whole chat history with every question. Instead, each conversation keeps a short **memory**: a summary of what has been said so far. For every question:
+
+1. The memory and the conversation's system prompt are sent along with your question.
+2. The answer is streamed to the screen, like in `query.py`.
+3. The model rewrites the memory to include the new question and answer, and it is saved.
+
+This keeps the prompt small no matter how long the conversation gets. The trade-off is that details the summary drops are gone for the model.
+
+### Usage
+
+Start a new conversation by asking a question without `--convo`. It is saved as `convos/convo_001.json`, `convo_002.json` and so on:
+
+```bash
+python3 query_history.py --model=5 --system "You are a running coach. Answer briefly." I'm training for a half marathon in May
+```
+
+Continue it with `--convo` and the conversation's number:
+
+```bash
+python3 query_history.py --convo=1 How long should my long runs be
+```
+
+Find the right number with `--list`, which shows each conversation's number, last update, turns, model and first question:
+
+```bash
+python3 query_history.py --list
+```
+
+| Switch | What it does |
+|---|---|
+| `--convo=N` | Continue conversation `N`, or a convo file given by its path. Without it, a new conversation is started. |
+| `--list` | List the saved conversations. |
+| `--model=N` | Model number or name. A new conversation uses the first model in `MODELS` unless you pick one. Using `--model` on an existing conversation switches it to that model from then on. |
+| `--system "TEXT"` | System prompt, saved in the conversation and used for every later question. Giving it again replaces it. |
+| `--stats`, `--nothinking`, `--think` | Same as in `query.py`. |
+
+Piping in text works the same as in `query.py`.
+
+### The convo file
+
+Each conversation is a JSON file in `convos/`, which is ignored by git:
+
+| Field | What it holds |
+|---|---|
+| `id`, `title` | The conversation's number, and the start of the first question. |
+| `model`, `system` | The model and system prompt used for the next question. |
+| `summary` | The memory that is sent with each question. You can edit it by hand. |
+| `turns`, `created`, `updated` | Number of questions asked, and when. |
+| `log` | Every question and answer in full, for you to read back. It is **not** sent to the model. |
+
+The memory's max length is set with `HISTORY_SUMMARY_WORDS` in `settings.py` (default 300 words). A longer memory remembers more details, but uses more of `num_ctx` and makes each question a bit slower.

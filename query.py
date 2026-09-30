@@ -21,6 +21,37 @@ DEFAULT_TIMEOUT = 600.0  # Seconds to wait for a model to answer
 
 THINK_VALUES = {"on": True, "off": False, "low": "low", "medium": "medium", "high": "high"}
 
+OPTIONS = getattr(settings, "OPTIONS", DEFAULT_OPTIONS)
+KEEP_ALIVE = getattr(settings, "KEEP_ALIVE", DEFAULT_KEEP_ALIVE)
+TIMEOUT = getattr(settings, "TIMEOUT", DEFAULT_TIMEOUT)
+SERVER_URL = f"http://{settings.IP}:11434"
+
+# Errors that mean the server can't be reached at all
+CONNECT_ERRORS = (ConnectionError, httpx.ConnectError, httpx.ConnectTimeout)
+
+
+def make_client():
+    # Fail fast if the server can't be reached, but give models plenty of time to answer
+    return Client(host=SERVER_URL, timeout=httpx.Timeout(TIMEOUT, connect=5.0))
+
+
+def load_models():
+    """The models from settings.py, or exit if there are none."""
+    models = getattr(settings, "MODELS", [])
+    if not models:
+        sys.exit("No models in settings.py. Run with --update-models or add them to MODELS.")
+    return models
+
+
+def read_prompt(words):
+    """The question from the command line, with any text piped in on stdin added after it."""
+    prompt = " ".join(words).strip()
+    if not sys.stdin.isatty():
+        piped = sys.stdin.read().strip()
+        if piped:
+            prompt = f"{prompt}\n\n{piped}" if prompt else piped
+    return prompt
+
 
 def server_unreachable():
     sys.exit(f"Could not connect to the Ollama server at {SERVER_URL}. "
@@ -31,7 +62,7 @@ def update_models(client):
     """Fetch the models downloaded on the server and write them to MODELS in settings.py."""
     try:
         models = sorted(m.model for m in client.list().models)
-    except (ConnectionError, httpx.ConnectError, httpx.ConnectTimeout):
+    except CONNECT_ERRORS:
         server_unreachable()
     block = "MODELS = [\n" + "".join(f'    "{m}",\n' for m in models) + "]\n"
 
@@ -98,37 +129,37 @@ class SectionPrinter:
         self.pending = ""
 
 
-def run_model(client, model_name, messages):
-    """Stream one model's thinking and answer to the screen. Returns its stats."""
+def run_model(client, model_name, messages, think=None, show_thinking=True):
+    """Stream one model's thinking and answer to the screen. Returns its stats and the answer."""
     start_wall_time = time.perf_counter()
     out = SectionPrinter()
-    got_answer = False
+    answer = ""
     final = None
 
     for chunk in client.chat(
         model=model_name,
         messages=messages,
         stream=True,
-        think=THINK,
+        think=think,
         options=OPTIONS,
         keep_alive=KEEP_ALIVE,
     ):
-        if chunk.message.thinking and not args.nothinking:
+        if chunk.message.thinking and show_thinking:
             out.write("thinking", chunk.message.thinking)
         if chunk.message.content:
-            got_answer = got_answer or bool(chunk.message.content.strip())
+            answer += chunk.message.content
             out.write("answer", chunk.message.content)
         if chunk.done:
             final = chunk
 
-    if not got_answer:
+    if not answer.strip():
         out.write("answer", "[No answer was returned]")
     out.close()
 
     # Ollama's internal timings, from the last chunk (nanoseconds to seconds)
     eval_sec = (final.eval_duration or 0) / 1e9 if final else 0.0
     eval_tokens = (final.eval_count or 0) if final else 0
-    return {
+    stats = {
         "tok_per_sec": (eval_tokens / eval_sec) if eval_sec > 0 else 0.0,
         "eval_tokens": eval_tokens,
         "eval_sec": eval_sec,
@@ -137,6 +168,7 @@ def run_model(client, model_name, messages):
         "prompt_tokens": (final.prompt_eval_count or 0) if final else 0,
         "total_sec": time.perf_counter() - start_wall_time,
     }
+    return stats, answer.strip()
 
 
 def print_stats(s):
@@ -163,91 +195,85 @@ def print_summary(results):
                   f"  {s['load_sec']:>6.2f}s  {s['total_sec']:>6.2f}s")
 
 
-parser = argparse.ArgumentParser(
-    description="Query models on an Ollama server on the local network.",
-    epilog="Text piped in on stdin is added to the question, e.g.: "
-           "cat script.py | query.py --model=1 Review this code")
-parser.add_argument("--update-models", action="store_true",
-                    help="fetch the models downloaded on the server and write them to settings.py")
-parser.add_argument("--list-models", action="store_true",
-                    help="list the models in settings.py with their numbers")
-parser.add_argument("--model", metavar="N",
-                    help="run only these models: a number, a list or range of numbers, "
-                         "or a model name (e.g. 2, 1,3,5, 1-3 or qwen3.5:9b)")
-parser.add_argument("--stats", action="store_true",
-                    help="show performance metrics after each answer, and a summary when running several models")
-parser.add_argument("--nothinking", action="store_true",
-                    help="don't show the model's thinking, only the answer")
-parser.add_argument("--think", choices=THINK_VALUES,
-                    help="turn the model's thinking on or off, or set how much it thinks "
-                         "(low/medium/high, only some models). Default: the model decides")
-parser.add_argument("--system", metavar="TEXT",
-                    help='system prompt that gives the model a role or instructions, e.g. "You are a security analyst"')
-parser.add_argument("prompt", nargs="*",
-                    help="the question to send to the model(s)")
-args = parser.parse_args()
+def main():
+    parser = argparse.ArgumentParser(
+        description="Query models on an Ollama server on the local network.",
+        epilog="Text piped in on stdin is added to the question, e.g.: "
+               "cat script.py | query.py --model=1 Review this code")
+    parser.add_argument("--update-models", action="store_true",
+                        help="fetch the models downloaded on the server and write them to settings.py")
+    parser.add_argument("--list-models", action="store_true",
+                        help="list the models in settings.py with their numbers")
+    parser.add_argument("--model", metavar="N",
+                        help="run only these models: a number, a list or range of numbers, "
+                             "or a model name (e.g. 2, 1,3,5, 1-3 or qwen3.5:9b)")
+    parser.add_argument("--stats", action="store_true",
+                        help="show performance metrics after each answer, and a summary when running several models")
+    parser.add_argument("--nothinking", action="store_true",
+                        help="don't show the model's thinking, only the answer")
+    parser.add_argument("--think", choices=THINK_VALUES,
+                        help="turn the model's thinking on or off, or set how much it thinks "
+                             "(low/medium/high, only some models). Default: the model decides")
+    parser.add_argument("--system", metavar="TEXT",
+                        help='system prompt that gives the model a role or instructions, e.g. "You are a security analyst"')
+    parser.add_argument("prompt", nargs="*",
+                        help="the question to send to the model(s)")
+    args = parser.parse_args()
 
-OPTIONS = getattr(settings, "OPTIONS", DEFAULT_OPTIONS)
-KEEP_ALIVE = getattr(settings, "KEEP_ALIVE", DEFAULT_KEEP_ALIVE)
-TIMEOUT = getattr(settings, "TIMEOUT", DEFAULT_TIMEOUT)
-THINK = THINK_VALUES.get(args.think)
+    client = make_client()
 
-SERVER_URL = f"http://{settings.IP}:11434"
-# Fail fast if the server can't be reached, but give models plenty of time to answer
-client = Client(host=SERVER_URL, timeout=httpx.Timeout(TIMEOUT, connect=5.0))
+    if args.update_models:
+        update_models(client)
+        return
 
-if args.update_models:
-    update_models(client)
-    sys.exit(0)
+    # The models to compare/test one after another (from settings.py)
+    models = load_models()
 
-# The models to compare/test one after another (from settings.py)
-MODELS = getattr(settings, "MODELS", [])
-if not MODELS:
-    sys.exit("No models in settings.py. Run with --update-models or add them to MODELS.")
+    if args.list_models:
+        for i, model_name in enumerate(models, start=1):
+            print(f"{i:>3}. {model_name}")
+        return
 
-if args.list_models:
-    for i, model_name in enumerate(MODELS, start=1):
-        print(f"{i:>3}. {model_name}")
-    sys.exit(0)
+    if args.model is not None:
+        models = select_models(args.model, models)
+        if not models:
+            sys.exit("No models selected with --model.")
 
-if args.model is not None:
-    MODELS = select_models(args.model, MODELS)
-    if not MODELS:
-        sys.exit("No models selected with --model.")
+    prompt = read_prompt(args.prompt)
+    if not prompt:
+        parser.error("missing question, e.g.: query.py --model=1 What is 6+6")
 
-prompt = " ".join(args.prompt).strip()
-if not sys.stdin.isatty():
-    piped = sys.stdin.read().strip()
-    if piped:
-        prompt = f"{prompt}\n\n{piped}" if prompt else piped
-if not prompt:
-    parser.error("missing question, e.g.: query.py --model=1 What is 6+6")
+    messages = [{'role': 'user', 'content': prompt}]
+    if args.system:
+        messages.insert(0, {'role': 'system', 'content': args.system})
 
-messages = [{'role': 'user', 'content': prompt}]
-if args.system:
-    messages.insert(0, {'role': 'system', 'content': args.system})
+    print(f"Running {len(models)} model(s) on {SERVER_URL}...\n")
 
-print(f"Running {len(MODELS)} model(s) on {SERVER_URL}...\n")
+    results = {}
+    for model_name in models:
+        print("\n" + "=" * 70)
+        print(f"Model: {model_name}")
+        print("=" * 70)
 
-results = {}
-for model_name in MODELS:
-    print("\n" + "=" * 70)
-    print(f"Model: {model_name}")
-    print("=" * 70)
+        try:
+            results[model_name], _ = run_model(client, model_name, messages,
+                                               think=THINK_VALUES.get(args.think),
+                                               show_thinking=not args.nothinking)
+            if args.stats:
+                print_stats(results[model_name])
+        except CONNECT_ERRORS:
+            server_unreachable()
+        except Exception as e:
+            results[model_name] = None
+            print(f"\nError while running {model_name}: {e}")
 
-    try:
-        results[model_name] = run_model(client, model_name, messages)
-        if args.stats:
-            print_stats(results[model_name])
-    except (ConnectionError, httpx.ConnectError, httpx.ConnectTimeout):
-        server_unreachable()
-    except Exception as e:
-        results[model_name] = None
-        print(f"\nError while running {model_name}: {e}")
+        # Short pause to let the GPU/Ollama free VRAM properly before the next model loads
+        if len(models) > 1:
+            time.sleep(1)
 
-    # Short pause to let the GPU/Ollama free VRAM properly before the next model loads
-    if len(MODELS) > 1:
-        time.sleep(1)
+    if args.stats and len(results) > 1:
+        print_summary(results)
 
-if args.stats and len(results) > 1:
-    print_summary(results)
+
+if __name__ == "__main__":
+    main()

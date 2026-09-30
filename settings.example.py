@@ -41,3 +41,8 @@ KEEP_ALIVE = 0
 
 # Seconds to wait for a model to answer before giving up.
 TIMEOUT = 600
+
+# query_history.py: max length of the conversation memory, in words. The memory is
+# sent with every question, so longer = remembers more details but uses more of
+# num_ctx and makes each question a bit slower.
+HISTORY_SUMMARY_WORDS = 300
