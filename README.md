@@ -5,7 +5,7 @@ Script that query my local ollama install on my network, with features
 
 `query.py` sends a prompt to one or more models on an Ollama server on your local network, one model at a time. For each model it prints:
 
-- the model's thinking (chain of thought), if it produces one
+- the model's thinking (chain of thought), if it produces one (hide it with `--nothinking`)
 - the final answer
 - with `--stats`: performance metrics (tokens/sec, generated tokens, model load time, prompt evaluation time and total wall time)
 
@@ -56,7 +56,7 @@ python3 query.py --list-models
 python3 query.py --model=2 What is 6+6
 ```
 
-Add `--stats` to also show performance metrics after each answer. Switches can be combined:
+Add `--stats` to also show performance metrics after each answer, and `--nothinking` to hide the model's thinking and only show the answer. Switches can be combined:
 
 ```bash
 python3 query.py --model=2 --stats What is 6+6
