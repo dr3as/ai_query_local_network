@@ -1,18 +1,49 @@
+import argparse
+import re
+import sys
 import time
+from pathlib import Path
+
 from ollama import Client
-from settings import IP
+import settings
+
+SETTINGS_FILE = Path(__file__).with_name("settings.py")
 
 
-SERVER_IP = f"http://{IP}:11434"
+def update_models(client):
+    """Henter modellene som er lastet ned på serveren og skriver dem til MODELS i settings.py."""
+    models = sorted(m.model for m in client.list().models)
+    block = "MODELS = [\n" + "".join(f'    "{m}",\n' for m in models) + "]\n"
+
+    text = SETTINGS_FILE.read_text()
+    pattern = re.compile(r"^MODELS\s*=\s*\[.*?\]\n?", re.MULTILINE | re.DOTALL)
+    if pattern.search(text):
+        text = pattern.sub(lambda _: block, text, count=1)
+    else:
+        text = text.rstrip("\n") + "\n\n" + block
+    SETTINGS_FILE.write_text(text)
+
+    print(f"Oppdaterte {SETTINGS_FILE.name} med {len(models)} modeller:")
+    for m in models:
+        print(f"  • {m}")
+
+
+parser = argparse.ArgumentParser(description="Test modeller på en Ollama-server i lokalnettet.")
+parser.add_argument("--update-models", action="store_true",
+                    help="hent modellene som er lastet ned på serveren og skriv dem til settings.py")
+args = parser.parse_args()
+
+SERVER_IP = f"http://{settings.IP}:11434"
 client = Client(host=SERVER_IP, timeout=600.0)
 
-# Liste over modellene du vil sammenligne/teste efter hverandre
-MODELS = [
-    "qwen3.5:9b",
-    #"",
-    #"",
-    #""
-]
+if args.update_models:
+    update_models(client)
+    sys.exit(0)
+
+# Liste over modellene du vil sammenligne/teste efter hverandre (fra settings.py)
+MODELS = getattr(settings, "MODELS", [])
+if not MODELS:
+    sys.exit("Ingen modeller i settings.py. Kjør med --update-models eller legg dem inn i MODELS.")
 
 prompt = "what is 1 + 1?"
 

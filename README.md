@@ -31,9 +31,19 @@ Then edit `settings.py` and set `IP` to the address of your Ollama server:
 IP = "192.168.1.50"
 ```
 
+### Models
+
+The models to test are listed in `MODELS` in `settings.py`. To fill the list with every model already downloaded on the server, run:
+
+```bash
+python3 query.py --update-models
+```
+
+This asks the server for its downloaded models, replaces the `MODELS` list in `settings.py` with them and exits without running any tests. Anything else in `settings.py` is kept. Comment out the models you don't want to run. Running `--update-models` again overwrites the list, including those comments.
+
 ## Usage
 
-Edit the `MODELS` list and the `prompt` in `query.py`, then run:
+Set the `prompt` in `query.py`, then run:
 
 ```bash
 python3 query.py
