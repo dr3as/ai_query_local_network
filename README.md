@@ -49,4 +49,13 @@ Set the `prompt` in `query.py`, then run:
 python3 query.py
 ```
 
+This runs every model in `MODELS`. To run just one, list the models with their numbers and pick one with `--model`:
+
+```bash
+python3 query.py --list-models
+python3 query.py --model=1
+```
+
+The numbers follow the order of `MODELS` in `settings.py`, so they change if you edit the list or run `--update-models`.
+
 The model options (`num_ctx`, `temperature`, `num_predict`) are set in the `client.chat(...)` call in `query.py`.

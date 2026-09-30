@@ -31,6 +31,10 @@ def update_models(client):
 parser = argparse.ArgumentParser(description="Test modeller på en Ollama-server i lokalnettet.")
 parser.add_argument("--update-models", action="store_true",
                     help="hent modellene som er lastet ned på serveren og skriv dem til settings.py")
+parser.add_argument("--list-models", action="store_true",
+                    help="vis modellene i settings.py med nummer")
+parser.add_argument("--model", type=int, metavar="N",
+                    help="kjør bare modell nummer N (se --list-models)")
 args = parser.parse_args()
 
 SERVER_IP = f"http://{settings.IP}:11434"
@@ -44,6 +48,16 @@ if args.update_models:
 MODELS = getattr(settings, "MODELS", [])
 if not MODELS:
     sys.exit("Ingen modeller i settings.py. Kjør med --update-models eller legg dem inn i MODELS.")
+
+if args.list_models:
+    for i, model_name in enumerate(MODELS, start=1):
+        print(f"{i:>3}. {model_name}")
+    sys.exit(0)
+
+if args.model is not None:
+    if not 1 <= args.model <= len(MODELS):
+        sys.exit(f"Ugyldig modellnummer {args.model}. Velg 1-{len(MODELS)} (se --list-models).")
+    MODELS = [MODELS[args.model - 1]]
 
 prompt = "what is 1 + 1?"
 
