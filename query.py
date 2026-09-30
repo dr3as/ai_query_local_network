@@ -35,6 +35,10 @@ parser.add_argument("--list-models", action="store_true",
                     help="vis modellene i settings.py med nummer")
 parser.add_argument("--model", type=int, metavar="N",
                     help="kjør bare modell nummer N (se --list-models)")
+parser.add_argument("--stats", action="store_true",
+                    help="vis ytelsesstatistikk etter hvert svar")
+parser.add_argument("prompt", nargs="*",
+                    help="spørsmålet som sendes til modellen(e)")
 args = parser.parse_args()
 
 SERVER_IP = f"http://{settings.IP}:11434"
@@ -59,7 +63,9 @@ if args.model is not None:
         sys.exit(f"Ugyldig modellnummer {args.model}. Velg 1-{len(MODELS)} (se --list-models).")
     MODELS = [MODELS[args.model - 1]]
 
-prompt = "what is 1 + 1?"
+prompt = " ".join(args.prompt).strip()
+if not prompt:
+    parser.error("mangler spørsmål, f.eks.: query.py --model=1 What is 6+6")
 
 print(f"Starter test mot {len(MODELS)} modeller på {SERVER_IP}...\n")
 
@@ -99,23 +105,24 @@ for model_name in MODELS:
         print(answer.strip() if answer else "[Ingen sluttrespons ble levert]")
         print("-" * 70)
 
-        # Hent ut Ollama sine interne beregninger (konverter fra nanosekunder til sekunder)
-        load_sec = response.get('load_duration', 0) / 1e9
-        prompt_eval_sec = response.get('prompt_eval_duration', 0) / 1e9
-        eval_sec = response.get('eval_duration', 0) / 1e9
+        if args.stats:
+            # Hent ut Ollama sine interne beregninger (konverter fra nanosekunder til sekunder)
+            load_sec = response.get('load_duration', 0) / 1e9
+            prompt_eval_sec = response.get('prompt_eval_duration', 0) / 1e9
+            eval_sec = response.get('eval_duration', 0) / 1e9
 
-        prompt_tokens = response.get('prompt_eval_count', 0)
-        eval_tokens = response.get('eval_count', 0)
+            prompt_tokens = response.get('prompt_eval_count', 0)
+            eval_tokens = response.get('eval_count', 0)
 
-        # Beregn tokens per sekund for responsgenereringen
-        tok_per_sec = (eval_tokens / eval_sec) if eval_sec > 0 else 0.0
+            # Beregn tokens per sekund for responsgenereringen
+            tok_per_sec = (eval_tokens / eval_sec) if eval_sec > 0 else 0.0
 
-        print("\nPERFORMANCE METRICS:")
-        print(f"  • Generation Speed  : {tok_per_sec:.2f} tokens/sec")
-        print(f"  • Genererte tokens  : {eval_tokens} tokens ({eval_sec:.2f}s)")
-        print(f"  • Modellinnlasting   : {load_sec:.2f}s")
-        print(f"  • Prompt evaluering : {prompt_eval_sec:.2f}s ({prompt_tokens} tokens)")
-        print(f"  • Total tid (Wall)  : {total_wall_time:.2f}s")
+            print("\nPERFORMANCE METRICS:")
+            print(f"  • Generation Speed  : {tok_per_sec:.2f} tokens/sec")
+            print(f"  • Genererte tokens  : {eval_tokens} tokens ({eval_sec:.2f}s)")
+            print(f"  • Modellinnlasting   : {load_sec:.2f}s")
+            print(f"  • Prompt evaluering : {prompt_eval_sec:.2f}s ({prompt_tokens} tokens)")
+            print(f"  • Total tid (Wall)  : {total_wall_time:.2f}s")
 
     except Exception as e:
         print(f"\nFeil under kjøring av {model_name}: {e}")

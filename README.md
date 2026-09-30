@@ -7,7 +7,7 @@ Script that query my local ollama install on my network, with features
 
 - the model's thinking (chain of thought), if it produces one
 - the final answer
-- performance metrics: tokens/sec, generated tokens, model load time, prompt evaluation time and total wall time
+- with `--stats`: performance metrics (tokens/sec, generated tokens, model load time, prompt evaluation time and total wall time)
 
 Each model is unloaded from VRAM right after it answers (`keep_alive=0`), so the models can be tested one after another without filling up the GPU.
 
@@ -43,17 +43,29 @@ This asks the server for its downloaded models, replaces the `MODELS` list in `s
 
 ## Usage
 
-Set the `prompt` in `query.py`, then run:
+Everything after the switches is the question:
 
 ```bash
-python3 query.py
+python3 query.py What is 6+6
 ```
 
-This runs every model in `MODELS`. To run just one, list the models with their numbers and pick one with `--model`:
+This asks every model in `MODELS`. To ask just one, list the models with their numbers and pick one with `--model`:
 
 ```bash
 python3 query.py --list-models
-python3 query.py --model=1
+python3 query.py --model=2 What is 6+6
+```
+
+Add `--stats` to also show performance metrics after each answer. Switches can be combined:
+
+```bash
+python3 query.py --model=2 --stats What is 6+6
+```
+
+Put the question in quotes if it contains characters the shell treats specially, such as `?`, `*`, `'` or `!`:
+
+```bash
+python3 query.py --model=2 "What's 6+6?"
 ```
 
 The numbers follow the order of `MODELS` in `settings.py`, so they change if you edit the list or run `--update-models`.
