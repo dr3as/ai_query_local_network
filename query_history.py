@@ -1,8 +1,9 @@
 """Have a conversation with a model without sending the whole chat history every time.
 
 Each conversation is stored in convos/convo_NNN.json. Instead of the full history, the
-model gets a short summary ("memory") of the conversation so far, and the summary is
-rewritten after every answer to include the new question and answer.
+model gets the last few exchanges word for word, plus a short summary ("memory") of
+everything before them. When an exchange gets too old to be sent in full, the model
+rewrites the memory to include it.
 """
 import argparse
 import json
@@ -17,22 +18,21 @@ from query import (CONNECT_ERRORS, THINK_VALUES, load_models, make_client, print
 
 CONVO_DIR = Path(__file__).with_name("convos")
 SUMMARY_WORDS = getattr(settings, "HISTORY_SUMMARY_WORDS", 300)
+RECENT_TURNS = getattr(settings, "HISTORY_RECENT_TURNS", 2)
 
 SUMMARY_SYSTEM = "You keep the memory of an ongoing conversation between a user and an AI assistant."
 
 SUMMARY_PROMPT = """CURRENT MEMORY:
 {summary}
 
-NEW EXCHANGE:
-User: {question}
+NEW EXCHANGES:
+{exchanges}
 
-Assistant: {answer}
-
-Rewrite the memory so it also covers the new exchange. The assistant will only see this
-memory, not the conversation itself, so it must hold everything needed to continue.
+Rewrite the memory so it also covers the new exchanges. The assistant will only see this
+memory, not these exchanges, so it must hold everything needed to continue.
 Rules:
 - Keep facts, names, numbers, decisions, the user's preferences and open questions.
-- If the new exchange changes something already in the memory, update that point
+- If the new exchanges change something already in the memory, update that point
   instead of adding a new one, so the memory never contradicts itself.
 - Keep code, commands and exact values only if they are likely to be needed again.
 - Drop greetings, filler, repetition and explanations that don't need repeating.
@@ -59,7 +59,7 @@ def new_convo(model, system):
     n = max(numbers, default=0) + 1
     now = datetime.now().isoformat(timespec="seconds")
     convo = {"id": n, "created": now, "updated": now, "model": model, "system": system,
-             "title": "", "turns": 0, "summary": "", "log": []}
+             "title": "", "turns": 0, "summary": "", "summarized_turns": 0, "log": []}
     return convo_path(n), convo
 
 
@@ -87,11 +87,13 @@ def strip_think_tags(text):
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
-def update_summary(client, convo, question, answer):
-    """Ask the model to fold the new question and answer into the conversation memory."""
+def update_summary(client, convo, entries):
+    """Ask the model to fold these log entries (question/answer pairs) into the conversation memory."""
+    exchanges = "\n\n".join(f"User: {e['question']}\n\nAssistant: {strip_think_tags(e['answer'])}"
+                            for e in entries)
     prompt = SUMMARY_PROMPT.format(
-        summary=convo["summary"] or "(empty, this is the first exchange)",
-        question=question, answer=strip_think_tags(answer), words=SUMMARY_WORDS)
+        summary=convo["summary"] or "(empty, these are the first exchanges)",
+        exchanges=exchanges, words=SUMMARY_WORDS)
     # Summarizing needs no thinking, so turn it off where the model supports that
     can_think = "thinking" in (client.show(convo["model"]).capabilities or [])
     response = client.chat(
@@ -154,15 +156,21 @@ def main():
     else:
         path, convo = new_convo(model or load_models()[0], args.system)
 
+    # Conversations from before summarized_turns existed had every turn in the memory
+    convo.setdefault("summarized_turns", convo["turns"])
+
     # The memory goes in the system prompt, after the user's own system prompt
     system = convo["system"] or ""
     if convo["summary"]:
         system += ("\n\n" if system else "") + (
-            "Notes from earlier in this conversation (a summary, not the full text):\n"
-            + convo["summary"])
-    messages = [{"role": "user", "content": question}]
-    if system:
-        messages.insert(0, {"role": "system", "content": system})
+            "Notes from earlier in this conversation (a summary of older exchanges; "
+            "the most recent exchanges follow in full):\n" + convo["summary"])
+    messages = [{"role": "system", "content": system}] if system else []
+    # The exchanges not yet in the memory, word for word
+    for entry in convo["log"][convo["summarized_turns"]:]:
+        messages.append({"role": "user", "content": entry["question"]})
+        messages.append({"role": "assistant", "content": strip_think_tags(entry["answer"])})
+    messages.append({"role": "user", "content": question})
 
     client = make_client()
     print(f"Conversation {convo['id']} ({path.name}), turn {convo['turns'] + 1}, "
@@ -185,17 +193,21 @@ def main():
     convo["title"] = convo["title"] or question.splitlines()[0][:60]
     convo["log"].append({"time": now, "model": convo["model"], "question": question, "answer": answer})
 
-    print("\nUpdating conversation memory...", end="", flush=True)
-    try:
-        summary = update_summary(client, convo, question, answer)
-    except Exception as e:
-        summary = ""
-        print(f" failed: {e}")
-    if summary:
-        convo["summary"] = summary
-        print(" done.")
-    else:
-        print(" Kept the old memory, so the next question won't know about this answer.")
+    # Fold the exchanges that no longer fit among the recent ones into the memory
+    to_summarize = convo["log"][convo["summarized_turns"]:len(convo["log"]) - RECENT_TURNS]
+    if to_summarize:
+        print("\nUpdating conversation memory...", end="", flush=True)
+        try:
+            summary = update_summary(client, convo, to_summarize)
+        except Exception as e:
+            summary = ""
+            print(f" failed: {e}")
+        if summary:
+            convo["summary"] = summary
+            convo["summarized_turns"] += len(to_summarize)
+            print(" done.")
+        else:
+            print(" Kept the old memory. The next question will try again.")
 
     save_convo(path, convo)
     print(f"Saved. Continue with: query_history.py --convo={convo['id']} Your next question")

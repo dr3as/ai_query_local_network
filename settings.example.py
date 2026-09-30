@@ -46,3 +46,8 @@ TIMEOUT = 600
 # sent with every question, so longer = remembers more details but uses more of
 # num_ctx and makes each question a bit slower.
 HISTORY_SUMMARY_WORDS = 300
+
+# query_history.py: how many of the latest exchanges are sent word for word. Older
+# ones are folded into the memory. Higher = follow-up questions work better, but
+# uses more of num_ctx. 0 = only the memory, nothing word for word.
+HISTORY_RECENT_TURNS = 2

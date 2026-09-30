@@ -119,13 +119,18 @@ If the server can't be reached, the script stops after 5 seconds with a message 
 
 ## Conversations with memory (`query_history.py`)
 
-`query_history.py` lets you have a conversation with a model without sending the whole chat history with every question. Instead, each conversation keeps a short **memory**: a summary of what has been said so far. For every question:
+`query_history.py` lets you have a conversation with a model without sending the whole chat history with every question. Instead, the model gets:
 
-1. The memory and the conversation's system prompt are sent along with your question.
+- the **last few exchanges word for word** (2 by default), so follow-ups like "make it shorter" work
+- a short **memory**: a summary of everything older than that
+
+For every question:
+
+1. The system prompt, the memory and the recent exchanges are sent along with your question.
 2. The answer is streamed to the screen, like in `query.py`.
-3. The model rewrites the memory to include the new question and answer, and it is saved.
+3. If an exchange has become too old to be sent word for word, the model rewrites the memory to include it. Then everything is saved.
 
-This keeps the prompt small no matter how long the conversation gets. The trade-off is that details the summary drops are gone for the model.
+This keeps the prompt small no matter how long the conversation gets. The trade-off is that details the memory drops are gone for the model (but are still in the file's `log`).
 
 ### Usage
 
@@ -166,7 +171,11 @@ Each conversation is a JSON file in `convos/`, which is ignored by git:
 | `id`, `title` | The conversation's number, and the start of the first question. |
 | `model`, `system` | The model and system prompt used for the next question. |
 | `summary` | The memory that is sent with each question. You can edit it by hand. |
+| `summarized_turns` | How many exchanges from the start of `log` are covered by the memory. The ones after it are sent word for word. |
 | `turns`, `created`, `updated` | Number of questions asked, and when. |
-| `log` | Every question and answer in full, for you to read back. It is **not** sent to the model. |
+| `log` | Every question and answer in full. Only the latest exchanges (those after `summarized_turns`) are sent to the model. |
 
-The memory's max length is set with `HISTORY_SUMMARY_WORDS` in `settings.py` (default 300 words). A longer memory remembers more details, but uses more of `num_ctx` and makes each question a bit slower.
+Two settings in `settings.py` control the memory:
+
+- `HISTORY_RECENT_TURNS` (default 2): how many of the latest exchanges are sent word for word. Higher makes follow-ups work better, but uses more of `num_ctx`. `0` sends only the memory.
+- `HISTORY_SUMMARY_WORDS` (default 300): the memory's max length. A longer memory remembers more details, but uses more of `num_ctx` and makes each question a bit slower.
