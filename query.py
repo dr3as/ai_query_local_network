@@ -1,8 +1,9 @@
 import time
 from ollama import Client
+from settings import IP
 
 
-SERVER_IP = "http://x.x.x.x:11434"
+SERVER_IP = f"http://{IP}:11434"
 client = Client(host=SERVER_IP, timeout=600.0)
 
 # Liste over modellene du vil sammenligne/teste efter hverandre
