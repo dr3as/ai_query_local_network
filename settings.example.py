@@ -51,3 +51,9 @@ HISTORY_SUMMARY_WORDS = 300
 # ones are folded into the memory. Higher = follow-up questions work better, but
 # uses more of num_ctx. 0 = only the memory, nothing word for word.
 HISTORY_RECENT_TURNS = 2
+
+# query_history.py and the chat app: how long the model stays loaded after each
+# message. Keeping it loaded makes every reply start right away instead of waiting
+# about 3 seconds to load it (twice when the memory is updated). Unlike KEEP_ALIVE
+# above, this is for chatting with one model. 0 = unload right away.
+HISTORY_KEEP_ALIVE = "10m"

@@ -39,7 +39,8 @@ IP = "192.168.1.50"
 | `IP` | Address of the Ollama server. |
 | `MODELS` | The models to test (see below). |
 | `OPTIONS` | Options sent to the model with every question, e.g. `temperature` and `num_ctx`. |
-| `KEEP_ALIVE` | How long a model stays in VRAM after answering. `0` unloads it right away; `"5m"` or `"1h"` keeps it loaded, so repeated questions skip the load time. |
+| `KEEP_ALIVE` | How long a model stays in VRAM after answering in `query.py`. `0` unloads it right away; `"5m"` or `"1h"` keeps it loaded, so repeated questions skip the load time. |
+| `HISTORY_KEEP_ALIVE` | The same for `query_history.py` and the chat app. Default `"10m"`, so the model stays loaded while you chat. |
 | `TIMEOUT` | Seconds to wait for a model to answer before giving up. |
 
 `settings.example.py` explains each option and lists more you can add, such as `top_p`, `repeat_penalty` and `seed`. The main ones:
@@ -188,6 +189,8 @@ Each conversation is a JSON file in `convos/`, which is ignored by git:
 | `summarized_turns` | How many exchanges from the start of `log` are covered by the memory. The ones after it are sent word for word. |
 | `turns`, `created`, `updated` | Number of questions asked, and when. |
 | `log` | Every question and answer in full. Only the latest exchanges (those after `summarized_turns`) are sent to the model. |
+
+The model stays loaded for 10 minutes after each message (`HISTORY_KEEP_ALIVE` in `settings.py`), so replies start right away instead of waiting about 3 seconds for it to load, twice when the memory is updated. In a test, messages after the first went from 6–9 seconds to about 2.
 
 Two settings in `settings.py` control the memory:
 

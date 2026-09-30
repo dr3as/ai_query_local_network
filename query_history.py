@@ -14,13 +14,16 @@ from datetime import datetime
 from pathlib import Path
 
 import settings
-from query import (CONNECT_ERRORS, KEEP_ALIVE, OPTIONS, THINK_VALUES, load_models, make_client,
+from query import (CONNECT_ERRORS, OPTIONS, THINK_VALUES, load_models, make_client,
                    print_stats, read_prompt, run_model, select_models, server_unreachable,
                    SERVER_URL)
 
 CONVO_DIR = Path(__file__).with_name("convos")
 SUMMARY_WORDS = getattr(settings, "HISTORY_SUMMARY_WORDS", 300)
 RECENT_TURNS = getattr(settings, "HISTORY_RECENT_TURNS", 2)
+# Keep the model loaded between questions, so each message doesn't wait for it to load
+# (and load again for the memory update). Separate from KEEP_ALIVE, which query.py uses.
+KEEP_ALIVE = getattr(settings, "HISTORY_KEEP_ALIVE", "10m")
 
 SUMMARY_SYSTEM = "You keep the memory of an ongoing conversation between a user and an AI assistant."
 
@@ -294,7 +297,7 @@ def main():
     try:
         stats, answer = run_model(client, convo["model"], messages,
                                   think=THINK_VALUES.get(args.think),
-                                  show_thinking=not args.nothinking)
+                                  show_thinking=not args.nothinking, keep_alive=KEEP_ALIVE)
     except CONNECT_ERRORS:
         server_unreachable()
     except Exception as e:

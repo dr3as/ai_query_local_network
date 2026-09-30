@@ -135,9 +135,9 @@ class SectionPrinter:
         self.pending = ""
 
 
-def stream_chat(client, model_name, messages, think=None):
+def stream_chat(client, model_name, messages, think=None, keep_alive=None):
     """Yield ("thinking", text) and ("answer", text) pieces as the model writes them,
-    and finally ("stats", dict) with Ollama's timings."""
+    and finally ("stats", dict) with Ollama's timings. keep_alive defaults to KEEP_ALIVE."""
     start_wall_time = time.perf_counter()
     final = None
 
@@ -147,7 +147,7 @@ def stream_chat(client, model_name, messages, think=None):
         stream=True,
         think=think,
         options=OPTIONS,
-        keep_alive=KEEP_ALIVE,
+        keep_alive=KEEP_ALIVE if keep_alive is None else keep_alive,
     ):
         if chunk.message.thinking:
             yield "thinking", chunk.message.thinking
@@ -170,13 +170,13 @@ def stream_chat(client, model_name, messages, think=None):
     }
 
 
-def run_model(client, model_name, messages, think=None, show_thinking=True):
+def run_model(client, model_name, messages, think=None, show_thinking=True, keep_alive=None):
     """Stream one model's thinking and answer to the screen. Returns its stats and the answer."""
     out = SectionPrinter()
     answer = ""
     stats = None
 
-    for kind, value in stream_chat(client, model_name, messages, think):
+    for kind, value in stream_chat(client, model_name, messages, think, keep_alive):
         if kind == "thinking" and show_thinking:
             out.write("thinking", value)
         elif kind == "answer":

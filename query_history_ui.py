@@ -15,8 +15,9 @@ from textual.widgets import (Button, Collapsible, Footer, Input, Label, ListItem
 from textual.worker import get_current_worker
 
 from query import CONNECT_ERRORS, SERVER_URL, load_models, make_client, stream_chat
-from query_history import (RECENT_TURNS, all_convos, build_messages, context_warning, fold_memory,
-                           new_convo, record_turn, resummarize, save_convo, strip_think_tags)
+from query_history import (KEEP_ALIVE, RECENT_TURNS, all_convos, build_messages, context_warning,
+                           fold_memory, new_convo, record_turn, resummarize, save_convo,
+                           strip_think_tags)
 
 HELP = """Commands:
   /full QUESTION   ask with the whole conversation word for word instead of the memory
@@ -378,7 +379,8 @@ class ChatApp(App):
         thinking = answer = ""
         last_update = 0.0
         try:
-            for kind, value in stream_chat(self.client, convo["model"], messages):
+            for kind, value in stream_chat(self.client, convo["model"], messages,
+                                           keep_alive=KEEP_ALIVE):
                 if worker.is_cancelled:
                     return
                 if kind == "thinking":
