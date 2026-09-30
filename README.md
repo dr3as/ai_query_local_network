@@ -158,9 +158,22 @@ python3 query_history.py --list
 | `--list` | List the saved conversations. |
 | `--model=N` | Model number or name. A new conversation uses the first model in `MODELS` unless you pick one. Using `--model` on an existing conversation switches it to that model from then on. |
 | `--system "TEXT"` | System prompt, saved in the conversation and used for every later question. Giving it again replaces it. |
+| `--full` | Send the whole conversation word for word instead of the memory, for this question only. Use it when you need a detail the memory dropped. |
+| `--resummarize` | Rebuild the memory from scratch from the full conversation. Use it when the memory has drifted or lost something important. Works on its own or together with a question (the memory is rebuilt first). |
 | `--stats`, `--nothinking`, `--think` | Same as in `query.py`. |
 
 Piping in text works the same as in `query.py`.
+
+### Fixing the memory
+
+Since every question and answer is kept in full in the file, the memory can always be repaired:
+
+```bash
+python3 query_history.py --convo=1 --full What was the exact code I gave you   # one question with everything
+python3 query_history.py --convo=1 --resummarize                               # rebuild the memory for good
+```
+
+`--full` warns you if the whole conversation is close to or over `num_ctx`, since the model then loses the start of it. `--resummarize` splits long conversations into parts that fit, and keeps the old memory if something goes wrong.
 
 ### The convo file
 

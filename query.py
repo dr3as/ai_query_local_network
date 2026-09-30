@@ -1,5 +1,6 @@
 import argparse
 import re
+import signal
 import sys
 import time
 from pathlib import Path
@@ -9,6 +10,11 @@ from ollama import Client
 import settings
 
 SETTINGS_FILE = Path(__file__).with_name("settings.py")
+
+# Exit quietly when the output is piped to a command that stops reading, like head.
+# Otherwise Python raises BrokenPipeError, which would look like a lost server connection.
+if hasattr(signal, "SIGPIPE"):  # Not on Windows
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
 # Used when settings.py doesn't set them (see settings.example.py)
 DEFAULT_OPTIONS = {
