@@ -47,6 +47,18 @@ def convo_path(n):
     return CONVO_DIR / f"convo_{n:03d}.json"
 
 
+def load_convo(path):
+    convo = json.loads(path.read_text())
+    # Conversations from before summarized_turns existed had every turn in the memory
+    convo.setdefault("summarized_turns", convo["turns"])
+    return convo
+
+
+def all_convos():
+    """All saved conversations as (path, convo) pairs, oldest first."""
+    return [(p, load_convo(p)) for p in sorted(CONVO_DIR.glob("convo_*.json"))]
+
+
 def find_convo(spec):
     """Turn a --convo value (a number or a file path) into the path of an existing conversation."""
     path = convo_path(int(spec)) if spec.isdigit() else Path(spec)
@@ -73,13 +85,12 @@ def save_convo(path, convo):
 
 
 def list_convos():
-    paths = sorted(CONVO_DIR.glob("convo_*.json"))
-    if not paths:
+    convos = all_convos()
+    if not convos:
         print("No conversations yet. Start one with: query_history.py Your question")
         return
     print(f"{'#':>4}  {'Updated':<16}  {'Turns':>5}  {'Model':<30}  Title")
-    for p in paths:
-        c = json.loads(p.read_text())
+    for _, c in convos:
         print(f"{c['id']:>4}  {c['updated'][:16].replace('T', ' '):<16}  {c['turns']:>5}  "
               f"{c['model'][:30]:<30}  {c['title']}")
 
@@ -114,11 +125,61 @@ def estimate_tokens(texts):
     return sum(len(t) for t in texts) // 4
 
 
-def resummarize(client, convo):
-    """Rebuild the memory from scratch from the full log. Returns True if it worked."""
+def build_messages(convo, question, full=False):
+    """The messages to send: the system prompt, the memory and the exchanges not yet in it,
+    then the question. With full=True the whole log is sent word for word instead of the memory."""
+    system = convo["system"] or ""
+    first_sent = 0 if full else convo["summarized_turns"]
+    if convo["summary"] and not full:
+        system += ("\n\n" if system else "") + (
+            "Notes from earlier in this conversation (a summary of older exchanges; "
+            "the most recent exchanges follow in full):\n" + convo["summary"])
+    messages = [{"role": "system", "content": system}] if system else []
+    for entry in convo["log"][first_sent:]:
+        messages.append({"role": "user", "content": entry["question"]})
+        messages.append({"role": "assistant", "content": strip_think_tags(entry["answer"])})
+    messages.append({"role": "user", "content": question})
+    return messages
+
+
+def context_warning(messages):
+    """A warning if the messages are close to or over num_ctx, else None."""
+    num_ctx = OPTIONS.get("num_ctx", 8192)
+    tokens = estimate_tokens(m["content"] for m in messages)
+    if tokens > num_ctx * 0.8:
+        return (f"The full conversation is about {tokens} tokens, close to or over num_ctx "
+                f"({num_ctx}). The model may lose the start of it; raise num_ctx in settings.py.")
+    return None
+
+
+def record_turn(convo, question, answer):
+    now = datetime.now().isoformat(timespec="seconds")
+    convo["turns"] += 1
+    convo["updated"] = now
+    convo["title"] = convo["title"] or question.splitlines()[0][:60]
+    convo["log"].append({"time": now, "model": convo["model"], "question": question, "answer": answer})
+
+
+def fold_memory(client, convo):
+    """Fold the exchanges that no longer fit among the recent ones into the memory.
+    Returns None if there was nothing to fold, else True if it worked. Raises on errors."""
+    to_summarize = convo["log"][convo["summarized_turns"]:len(convo["log"]) - RECENT_TURNS]
+    if not to_summarize:
+        return None
+    summary = update_summary(client, convo, to_summarize)
+    if not summary:
+        return False
+    convo["summary"] = summary
+    convo["summarized_turns"] += len(to_summarize)
+    return True
+
+
+def resummarize(client, convo, report=print):
+    """Rebuild the memory from scratch from the full log, reporting progress with report().
+    Returns True if it worked. On failure the old memory is kept."""
     entries = convo["log"][:max(len(convo["log"]) - RECENT_TURNS, 0)]
     if not entries:
-        print("Nothing to summarize yet: all exchanges are still sent word for word.")
+        report("Nothing to summarize yet: all exchanges are still sent word for word.")
         return True
 
     # Summarize in batches that fit comfortably in num_ctx, next to the memory itself
@@ -133,22 +194,21 @@ def resummarize(client, convo):
     old_summary = convo["summary"]
     convo["summary"] = ""
     for i, batch in enumerate(batches, start=1):
-        print(f"Rebuilding the memory from {len(entries)} exchanges"
-              + (f" (part {i}/{len(batches)})" if len(batches) > 1 else "") + "...",
-              end="", flush=True)
+        report(f"Rebuilding the memory from {len(entries)} exchanges"
+               + (f" (part {i}/{len(batches)})" if len(batches) > 1 else "") + "...")
         try:
             summary = update_summary(client, convo, batch)
-        except CONNECT_ERRORS:
-            server_unreachable()
         except Exception as e:
-            summary = ""
-            print(f" failed: {e}")
+            convo["summary"] = old_summary
+            if isinstance(e, CONNECT_ERRORS):
+                raise
+            report(f"Failed: {e}. Kept the old memory.")
+            return False
         if not summary:
             convo["summary"] = old_summary
-            print(" Kept the old memory.")
+            report("The model returned an empty memory. Kept the old memory.")
             return False
         convo["summary"] = summary
-        print(" done.")
     convo["summarized_turns"] = len(entries)
     return True
 
@@ -203,7 +263,7 @@ def main():
 
     if args.convo:
         path = find_convo(args.convo)
-        convo = json.loads(path.read_text())
+        convo = load_convo(path)
         if model:
             convo["model"] = model
         if args.system:
@@ -211,39 +271,25 @@ def main():
     else:
         path, convo = new_convo(model or load_models()[0], args.system)
 
-    # Conversations from before summarized_turns existed had every turn in the memory
-    convo.setdefault("summarized_turns", convo["turns"])
-
     client = make_client()
 
     if args.resummarize:
-        if resummarize(client, convo):
+        try:
+            ok = resummarize(client, convo)
+        except CONNECT_ERRORS:
+            server_unreachable()
+        if ok:
             print(f"New memory:\n{convo['summary']}\n" if convo["summary"] else "", end="")
             save_convo(path, convo)
         if not question:
             return
 
-    # With --full the whole log is sent word for word; otherwise the memory plus the
-    # exchanges not yet in it. The memory goes after the user's own system prompt.
-    system = convo["system"] or ""
-    first_sent = 0 if args.full else convo["summarized_turns"]
-    if convo["summary"] and not args.full:
-        system += ("\n\n" if system else "") + (
-            "Notes from earlier in this conversation (a summary of older exchanges; "
-            "the most recent exchanges follow in full):\n" + convo["summary"])
-    messages = [{"role": "system", "content": system}] if system else []
-    for entry in convo["log"][first_sent:]:
-        messages.append({"role": "user", "content": entry["question"]})
-        messages.append({"role": "assistant", "content": strip_think_tags(entry["answer"])})
-    messages.append({"role": "user", "content": question})
-
+    messages = build_messages(convo, question, full=args.full)
     print(f"Conversation {convo['id']} ({path.name}), turn {convo['turns'] + 1}, "
           f"model {convo['model']} on {SERVER_URL}"
           + (", with the full conversation" if args.full else ""))
-    num_ctx = OPTIONS.get("num_ctx", 8192)
-    if args.full and (tokens := estimate_tokens(m["content"] for m in messages)) > num_ctx * 0.8:
-        print(f"Warning: the full conversation is about {tokens} tokens, close to or over num_ctx "
-              f"({num_ctx}). The model may lose the start of it; raise num_ctx in settings.py.")
+    if args.full and (warning := context_warning(messages)):
+        print(f"Warning: {warning}")
 
     try:
         stats, answer = run_model(client, convo["model"], messages,
@@ -256,27 +302,17 @@ def main():
     if args.stats:
         print_stats(stats)
 
-    now = datetime.now().isoformat(timespec="seconds")
-    convo["turns"] += 1
-    convo["updated"] = now
-    convo["title"] = convo["title"] or question.splitlines()[0][:60]
-    convo["log"].append({"time": now, "model": convo["model"], "question": question, "answer": answer})
+    record_turn(convo, question, answer)
 
-    # Fold the exchanges that no longer fit among the recent ones into the memory
-    to_summarize = convo["log"][convo["summarized_turns"]:len(convo["log"]) - RECENT_TURNS]
-    if to_summarize:
-        print("\nUpdating conversation memory...", end="", flush=True)
-        try:
-            summary = update_summary(client, convo, to_summarize)
-        except Exception as e:
-            summary = ""
-            print(f" failed: {e}")
-        if summary:
-            convo["summary"] = summary
-            convo["summarized_turns"] += len(to_summarize)
-            print(" done.")
-        else:
-            print(" Kept the old memory. The next question will try again.")
+    try:
+        folded = fold_memory(client, convo)
+        error = ""
+    except Exception as e:
+        folded, error = False, f" ({e})"
+    if folded:
+        print("\nUpdated the conversation memory.")
+    elif folded is False:
+        print(f"\nCould not update the memory{error}. The next question will try again.")
 
     save_convo(path, convo)
     print(f"Saved. Continue with: query_history.py --convo={convo['id']} Your next question")

@@ -135,11 +135,10 @@ class SectionPrinter:
         self.pending = ""
 
 
-def run_model(client, model_name, messages, think=None, show_thinking=True):
-    """Stream one model's thinking and answer to the screen. Returns its stats and the answer."""
+def stream_chat(client, model_name, messages, think=None):
+    """Yield ("thinking", text) and ("answer", text) pieces as the model writes them,
+    and finally ("stats", dict) with Ollama's timings."""
     start_wall_time = time.perf_counter()
-    out = SectionPrinter()
-    answer = ""
     final = None
 
     for chunk in client.chat(
@@ -150,22 +149,17 @@ def run_model(client, model_name, messages, think=None, show_thinking=True):
         options=OPTIONS,
         keep_alive=KEEP_ALIVE,
     ):
-        if chunk.message.thinking and show_thinking:
-            out.write("thinking", chunk.message.thinking)
+        if chunk.message.thinking:
+            yield "thinking", chunk.message.thinking
         if chunk.message.content:
-            answer += chunk.message.content
-            out.write("answer", chunk.message.content)
+            yield "answer", chunk.message.content
         if chunk.done:
             final = chunk
-
-    if not answer.strip():
-        out.write("answer", "[No answer was returned]")
-    out.close()
 
     # Ollama's internal timings, from the last chunk (nanoseconds to seconds)
     eval_sec = (final.eval_duration or 0) / 1e9 if final else 0.0
     eval_tokens = (final.eval_count or 0) if final else 0
-    stats = {
+    yield "stats", {
         "tok_per_sec": (eval_tokens / eval_sec) if eval_sec > 0 else 0.0,
         "eval_tokens": eval_tokens,
         "eval_sec": eval_sec,
@@ -174,6 +168,26 @@ def run_model(client, model_name, messages, think=None, show_thinking=True):
         "prompt_tokens": (final.prompt_eval_count or 0) if final else 0,
         "total_sec": time.perf_counter() - start_wall_time,
     }
+
+
+def run_model(client, model_name, messages, think=None, show_thinking=True):
+    """Stream one model's thinking and answer to the screen. Returns its stats and the answer."""
+    out = SectionPrinter()
+    answer = ""
+    stats = None
+
+    for kind, value in stream_chat(client, model_name, messages, think):
+        if kind == "thinking" and show_thinking:
+            out.write("thinking", value)
+        elif kind == "answer":
+            answer += value
+            out.write("answer", value)
+        elif kind == "stats":
+            stats = value
+
+    if not answer.strip():
+        out.write("answer", "[No answer was returned]")
+    out.close()
     return stats, answer.strip()
 
 

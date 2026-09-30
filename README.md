@@ -14,7 +14,8 @@ By default each model is unloaded from VRAM right after it answers, so the model
 ## Requirements
 
 - Python 3
-- The `ollama` Python package: `pip install ollama`
+- The `ollama` Python package: `pip install ollama` (or `sudo apt install python3-ollama`)
+- For `query_history_ui.py` only: the `textual` package: `pip install textual` (or `sudo apt install python3-textual`)
 - An Ollama server reachable on your network (default port `11434`)
 
 ## Setup
@@ -192,3 +193,36 @@ Two settings in `settings.py` control the memory:
 
 - `HISTORY_RECENT_TURNS` (default 2): how many of the latest exchanges are sent word for word. Higher makes follow-ups work better, but uses more of `num_ctx`. `0` sends only the memory.
 - `HISTORY_SUMMARY_WORDS` (default 300): the memory's max length. A longer memory remembers more details, but uses more of `num_ctx` and makes each question a bit slower.
+
+## Chat app (`query_history_ui.py`)
+
+`query_history_ui.py` is a full-screen terminal chat for the same conversations as `query_history.py`. It uses the same memory logic and the same files in `convos/`, so you can switch between the two at any time.
+
+```bash
+python3 query_history_ui.py
+```
+
+The conversations are listed on the left, newest first. Pick one with the arrow keys and Enter, and chat in the box at the bottom. Answers stream in as they are written, with the model's thinking in a box that folds away once the answer starts.
+
+| Key | What it does |
+|---|---|
+| `Enter` | In the list: open the conversation. In the chat: send the message. |
+| `Ctrl+N` | New conversation: choose the model and an optional system prompt. |
+| `d` or `Delete` | In the list: delete the highlighted conversation (asks first). |
+| `Ctrl+O` | Change the model of the open conversation. The memory and history are kept. |
+| `Ctrl+T` | Show or hide the models' thinking. |
+| `Esc` | Go to the conversation list. |
+| `Ctrl+Q` | Quit. |
+
+Commands you can type in the chat:
+
+| Command | What it does |
+|---|---|
+| `/full QUESTION` | Ask with the whole conversation word for word instead of the memory (like `--full`). |
+| `/resummarize` | Rebuild the memory from the full conversation (like `--resummarize`). |
+| `/memory` | Show the memory. |
+| `/system` | Show the system prompt. `/system TEXT` sets it. |
+| `/help` | List the commands. |
+
+Messages are one line; there is no multi-line input or piping in files here. Use `query_history.py` for that.
+
